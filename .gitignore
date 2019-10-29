@@ -1,5 +1,8 @@
 # Tooling
 docs/push.sh
+python-organ-logo.png
+pushgit.sh
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
