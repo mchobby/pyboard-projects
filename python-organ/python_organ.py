@@ -1,9 +1,44 @@
+"""
+Python-Organ - a MicroPython polyphonic Organ project based on AD9833 frequence generator.
+
+* Author(s): Meurisse D. from MCHobby (shop.mchobby.be).
+
+See project source @ https://github.com/mchobby/pyboard-projects/tree/master/python-organ
+
+"""
+#
+# The MIT License (MIT)
+#
+# Copyright (c) 2019 Meurisse D. for MC Hobby
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+
+
 from ad9833 import AD9833, MODE_SINE
-from machine import Pin, SPI
+from mpr121 import MPR121
+from machine import Pin, SPI, I2C
 
 # Notes = Key,Frequency
 # 523.25, 587.33, 659.26, 698.46, 783.99, 880, 987.77, 1046.50
-NOTES = { 'C':523, 'D': 587, 'E':659, 'F':698, 'G':784, 'A':880, 'B':988, 'C': 1046 }
+NOTES = { 'C':523, 'D': 587, 'E':659, 'F':698, 'G':784, 'A':880, 'B':988, 'C1': 1046 }
+# Keys = correspondance between KEY index and corresponding note
+KEYS = ['C','D','E','F','G','A', 'B', 'C2']
 
 class Voice:
 	""" store information about a voice (an AD9833) and current note. """
@@ -44,15 +79,24 @@ class Organ:
 			_voice.note = None
 
 	def play_note( self, note ):
+		assert note in NOTES, 'Invalid note %s' % note
+		# Do not play twice the same note
+		if note in self.playing_status():
+			self.debug( "Note %s already playing!" % note )
+			return
 		# Find a free oscillator and play the note
 		# If no oscillator available --> do nothing
 		for _voice in self.voices:
 			if not(_voice.note):
 				_voice.note = note
+				_voice.generator.select_register(0)
+				_voice.generator.mode = MODE_SINE
 				_voice.generator.freq = NOTES[note]
-				_voice.reset = False # Release the signal generator
-				self.debug( "Play note %s on %s" % (note,_voice.generator.fsync.names()[1]) )
-				break
+				_voice.generator.phase= 0  # No phase shift (0..4095)
+				_voice.generator.reset = False # Release the signal generator
+				self.debug( "Play note %s on %s @ %s Hz" % (note,_voice.generator.fsync.names()[1],NOTES[note]) )
+				return
+		self.debug( "No voice remaining!")
 
 	def clear_note( self, note ):
 		# Find the oscillator that play the note
@@ -68,12 +112,68 @@ class Organ:
 		""" list of voices with note currently playing """
 		return [_voice.note for _voice in self.voices ]
 
+class Keyboard():
+	def __init__(self, i2c, debug=False):
+		self.mpr = MPR121( i2c )
+		self.touched = bytearray( 24 ) # Allow to read twice the states and store it in store1 or store2 µ
+
+		self._debug = debug
+		# Initialize the touched
+		self.read( store=1 ) # Current state
+		self.read( store=2 ) # Last Known state
+		# Callback routine
+		self.on_key_change = None # Annonce Pressed/Release with callback( key=0..12, Pressed=True ) otherwise it callit for release
+
+	def debug( self, msg ):
+		# display debug message
+		if self._debug:
+			print( msg )
+
+	def read( self, store ):
+		""" Read and decode touched entries and populate touched store """
+		assert 1<=store<=2, "Can only read data to store 1 or 2"
+		data = self.mpr.touched()
+		for i in range( 12 ):
+			self.touched[i+(store-1)*12] = 1 if data & (1<<i) else 0
+
+	def update( self ):
+		""" Call it as often as possible to detect key pressed / key released """
+		# Read the current state
+		self.read( store=1 )
+		for key in range( 12 ):
+			# Key state has changed? (pressed or release)
+			if self.touched[key] != self.touched[key+12]:
+				self.debug( "Key %i is %s" %(key,"PRESSED" if self.touched[key]>0 else "Released") )
+				if self.on_key_change:
+					self.on_key_change( key, pressed=(self.touched[key]>0) )
+				# remember the current state as last state
+				self.touched[key+12]=self.touched[key]
+
+
 # Create SPI bus for AD9833
-spi = SPI(2, polarity=1, phase=0)
+spi = SPI(2, baudrate=9600, polarity=1, phase=0)
+i2c = I2C(2)
 
 # create organ & add voices
 organ = Organ( spi=spi, debug=True )
-organ.add_voice( "Y5" )
+organ.add_voice( "Y3" )
 organ.add_voice( "Y4" )
-
 organ.clear_all()
+
+def keyboard_changed( key, pressed ):
+	""" This will be called when a key is pressed or released """
+	global organ
+	# Key from 0 to 7 are for corresponding notes in NOTES
+	if 0<= key <= len(KEYS):
+		# Transform key index into Note letter
+		note = KEYS[key]
+		if pressed:
+			organ.play_note(note)
+		else:
+			organ.clear_note(note)
+
+# Create the keyboard
+keyb=Keyboard( i2c=i2c, debug=True )
+keyb.on_key_change = keyboard_changed
+while True:
+	keyb.update()
