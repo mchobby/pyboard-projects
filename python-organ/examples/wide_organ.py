@@ -1,5 +1,5 @@
 """
-Python-Organ - a MicroPython polyphonic Organ project based on AD9833 frequence generator.
+Wide-Organ - The MicroPython polyphonic Organ project over 2 octaves and 4 AD9833 frequence generator.
 
 * Author(s): Meurisse D. from MCHobby (shop.mchobby.be).
 
@@ -33,12 +33,20 @@ See project source @ https://github.com/mchobby/pyboard-projects/tree/master/pyt
 from ad9833 import AD9833, MODE_SINE
 from mpr121 import MPR121
 from machine import Pin, SPI, I2C
+from time import sleep
+
+green_btn  = Pin( "X5", Pin.IN, Pin.PULL_UP )
+red_btn    = Pin( "X6", Pin.IN, Pin.PULL_UP )
+yellow_btn = Pin( "X7", Pin.IN, Pin.PULL_UP )
+blue_btn   = Pin( "X8", Pin.IN, Pin.PULL_UP )
 
 # Notes = Key,Frequency
 # 523.25, 587.33, 659.26, 698.46, 783.99, 880, 987.77, 1046.50
-NOTES = { 'C1':523, 'D1': 587, 'E1':659, 'F1':698, 'G1':784, 'A1':880, 'B1':988, 'C2': 1046 }
+NOTES = { 'C1':523  , 'D1': 587, 'E1': 659, 'F1': 698, 'G1': 784, 'A1': 880, 'B1': 988,
+		  'C2': 1046, 'D2':1110, 'E2':1182, 'F2':1221, 'G2':1307, 'A2':1403, 'B2':1511,
+		  'C3': 1569 }
 # Keys = correspondance between KEY index and corresponding note
-KEYS = ['C1','D1','E1','F1','G1','A1', 'B1', 'C2']
+KEYS = ['C1','D1','E1','F1','G1','A1', 'B1', 'C2', 'D2', 'E2', 'F2', 'G2', 'A2', 'B2', 'C3']
 
 class Voice:
 	""" store information about a voice (an AD9833) and current note. """
@@ -113,9 +121,12 @@ class Organ:
 		return [_voice.note for _voice in self.voices ]
 
 class Keyboard():
-	def __init__(self, i2c, debug=False):
-		self.mpr = MPR121( i2c )
-		self.touched = bytearray( 24 ) # Allow to read twice the states and store it in store1 or store2 µ
+	""" MPR121 Keyboard based on ONE or Several MPR121 """
+	def __init__(self, i2c, addrs = [0x5A], debug=False):
+		self.MPRs = list()
+		for addr in addrs:
+			self.MPRs.append( MPR121( i2c, address=addr ) )
+		self.touched = bytearray( self.reader_count*12*2 ) # Allow to read twice the states and store it in store1 or store2 µ
 
 		self._debug = debug
 		# Initialize the touched
@@ -129,25 +140,32 @@ class Keyboard():
 		if self._debug:
 			print( msg )
 
+	@property
+	def reader_count( self ):
+		""" Number of MPR121 reader (of 12 entries each) """
+		return len( self.MPRs )
+
 	def read( self, store ):
 		""" Read and decode touched entries and populate touched store """
 		assert 1<=store<=2, "Can only read data to store 1 or 2"
-		data = self.mpr.touched()
-		for i in range( 12 ):
-			self.touched[i+(store-1)*12] = 1 if data & (1<<i) else 0
+		z = zip( range(self.reader_count), self.MPRs )
+		for mpr_index, mpr in z:
+			data = mpr.touched()
+			for i in range( 12 ):
+				self.touched[(mpr_index*12)+(i+(store-1)*12)] = 1 if data & (1<<i) else 0
 
 	def update( self ):
 		""" Call it as often as possible to detect key pressed / key released """
 		# Read the current state
 		self.read( store=1 )
-		for key in range( 12 ):
+		for key in range( self.reader_count * 12 ):
 			# Key state has changed? (pressed or release)
-			if self.touched[key] != self.touched[key+12]:
+			if self.touched[key] != self.touched[key+(self.reader_count*12)]:
 				self.debug( "Key %i is %s" %(key,"PRESSED" if self.touched[key]>0 else "Released") )
 				if self.on_key_change:
 					self.on_key_change( key, pressed=(self.touched[key]>0) )
 				# remember the current state as last state
-				self.touched[key+12]=self.touched[key]
+				self.touched[key+(self.reader_count*12)]=self.touched[key]
 
 
 # Create SPI bus for AD9833
@@ -175,7 +193,19 @@ def keyboard_changed( key, pressed ):
 			organ.clear_note(note)
 
 # Create the keyboard
-keyb=Keyboard( i2c=i2c, debug=True )
+keyb=Keyboard( i2c=i2c, addrs = [0x5A,0X5B], debug=False )
 keyb.on_key_change = keyboard_changed
 while True:
 	keyb.update()
+	if blue_btn.value()==0:
+		print( "Resetting..." )
+		organ.clear_all()
+		organ.play_note('C2')
+		sleep(0.5)
+		organ.clear_note('C2')
+		sleep(0.5)
+		organ.play_note('C2')
+		sleep(0.5)
+		organ.clear_note('C2')
+		sleep(0.5)
+		print( "Reset done" )
