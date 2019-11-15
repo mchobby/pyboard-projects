@@ -39,8 +39,6 @@ Once wiredn the back of the word clock should look like this:
 
 ![Wiring the word-clock (part 2)](docs/_static/word-clock-02.jpg)
 
-
-
 # Dependencies
 This project relies on the following library:
 * noepixel.py : Using NeoPixel under MicroPython [located here (esp8266-upy GitHub)](https://github.com/mchobby/esp8266-upy/tree/master/neopixel)
