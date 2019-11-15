@@ -4,6 +4,8 @@
 
 Create a work clock based on NeoPixels lighting letters cuts into a 18cm square face.
 
+See the prototype in action in this [YouTube vidéo](https://youtu.be/s56jna6cQnw).
+
 # Building
 First, you need to download the CAD file and cut it with Laser Cutter.<br />
 This CAD file format can be managed with the help of Fusion 360.<br />
